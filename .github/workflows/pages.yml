@@ -1,0 +1,74 @@
+name: Build and deploy web app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare web files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p site unpack
+          shopt -s nullglob
+          zips=( *.zip )
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo "No ZIP archive found in repository root."
+            exit 1
+          fi
+          for archive in "${zips[@]}"; do
+            mkdir -p "unpack/${archive%.zip}"
+            unzip -q "$archive" -d "unpack/${archive%.zip}"
+          done
+          # Some app exports wrap the website in artifact.tar.
+          while IFS= read -r -d '' tarfile; do
+            mkdir -p "$(dirname "$tarfile")/tar-extracted"
+            tar -xf "$tarfile" -C "$(dirname "$tarfile")/tar-extracted"
+          done < <(find unpack -type f -name '*.tar' -print0)
+          # Locate the actual app entry point and publish its complete folder.
+          index_file="$(find unpack -type f -name index.html -print -quit)"
+          if [ -z "$index_file" ]; then
+            echo "index.html was not found inside the uploaded ZIP."
+            find unpack -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+          app_dir="$(dirname "$index_file")"
+          cp -a "$app_dir"/. site/
+          test -s site/index.html
+          echo "Published source folder: $app_dir"
+          find site -maxdepth 2 -type f | sort | head -100
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
