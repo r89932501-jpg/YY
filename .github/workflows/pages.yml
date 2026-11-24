@@ -54,72 +54,82 @@ jobs:
           echo "Published source folder: $app_dir"
           find site -maxdepth 2 -type f | sort | head -100
 
-      - name: Extend route profile
+      - name: Rebuild route data without overlays
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import base64, gzip, json
           from pathlib import Path
-          raw = Path('profile-extension.json.gz.b64').read_text().strip()
-          try:
-              payload = gzip.decompress(base64.b64decode(raw, validate=True))
-          except Exception:
-              payload = None
-              for i in range(len(raw)):
-                  candidate = raw[:i] + raw[i+1:]
-                  if len(candidate) % 4:
-                      continue
-                  try:
-                      payload = gzip.decompress(base64.b64decode(candidate, validate=True))
-                      break
-                  except Exception:
-                      pass
-              if payload is None:
-                  raise RuntimeError('Profile extension data is damaged')
-          ext = json.loads(payload)
+
+          def read_gzip_b64(name):
+              raw = Path(name).read_text().strip()
+              return json.loads(gzip.decompress(base64.b64decode(raw)))
+
+          ext = read_gzip_b64('profile-extension.json.gz.b64')
+          objects = read_gzip_b64('station-signal-extension.json.gz.b64')
           path = Path('site/index.html')
           html = path.read_text(encoding='utf-8')
-          start = html.index('const D = ') + len('const D = ')
+          marker = 'const D = '
+          start = html.index(marker) + len(marker)
           end = html.index(';' + chr(10) + '(function', start)
           data = json.loads(html[start:end])
-          for direction in ('odd', 'even'):
-              data[direction]['el'].extend(ext[direction])
-              data[direction]['el'].sort(key=lambda row: row[0])
-              for i in range(1, len(data[direction]['el'])):
-                  prev, cur = data[direction]['el'][i-1], data[direction]['el'][i]
-                  gap = cur[0] - (prev[0] + prev[1])
-                  if 0 < gap <= 5:
-                      prev[1] += gap
-          extra_raw = Path('station-signal-extension.json.gz.b64').read_text().strip()
-          extra = json.loads(gzip.decompress(base64.b64decode(extra_raw)))
-          for direction in ('odd', 'even'):
-              # Combine all records with the same station name into one interval.
-              combined = {}
-              for row in list(data[direction]['st']) + list(extra[direction]['st']):
-                  name = ' '.join(str(row[0]).strip().casefold().replace('ё', 'е').split())
-                  if not name:
+
+          # Build one non-overlapping profile. New digitized segments take
+          # precedence wherever they overlap the old profile; uncovered parts
+          # of the old profile are retained.
+          def rebuild_profile(old_rows, new_rows):
+              segments = []
+              for priority, rows in ((0, old_rows), (1, new_rows)):
+                  for row in rows:
+                      a, length, grade = float(row[0]), float(row[1]), float(row[2])
+                      if length > 0:
+                          segments.append((a, a + length, grade, priority))
+              boundaries = sorted({x for a, b, _, _ in segments for x in (a, b)})
+              result = []
+              for a, b in zip(boundaries, boundaries[1:]):
+                  if b <= a:
                       continue
-                  start_m, end_m = float(row[1]), float(row[2])
-                  if name not in combined:
-                      combined[name] = [str(row[0]).strip(), start_m, end_m]
+                  mid = (a + b) / 2
+                  active = [s for s in segments if s[0] <= mid < s[1]]
+                  if not active:
+                      continue
+                  chosen = max(active, key=lambda s: s[3])
+                  grade = chosen[2]
+                  if result and abs((result[-1][0] + result[-1][1]) - a) < 0.01 and abs(result[-1][2] - grade) < 0.0001:
+                      result[-1][1] += b - a
                   else:
-                      combined[name][1] = min(combined[name][1], start_m)
-                      combined[name][2] = max(combined[name][2], end_m)
-              data[direction]['st'] = sorted(combined.values(), key=lambda row: row[1])
-              data[direction]['sg'].extend(extra[direction]['sg'])
+                      result.append([a, b - a, grade])
+              return [[int(a) if a.is_integer() else a, int(length) if length.is_integer() else length, grade]
+                      for a, length, grade in result]
+
+          for direction in ('odd', 'even'):
+              data[direction]['el'] = rebuild_profile(data[direction]['el'], ext[direction])
+              # The route-object file is the authoritative complete list.
+              data[direction]['st'] = objects[direction]['st']
+              data[direction]['sg'] = objects[direction]['sg']
               data[direction]['sg'].sort(key=lambda row: row[0])
-          data['posts'].extend(ext['posts'])
+
+          # Replace, never append, the GPS kilometre-post coordinates.
+          data['posts'] = ext['posts']
           data['posts'].sort(key=lambda row: row[0])
+
           html = html[:start] + json.dumps(data, ensure_ascii=False, separators=(',', ':')) + html[end:]
           html = html.replace('km>=4919&&km<=5330', 'km>=4680&&km<=5649')
           html = html.replace('Оцифрованный профиль уклонов в этой версии есть для 4919–5330 км', 'Оцифрованный профиль уклонов в этой версии есть для 4680–5649 км')
-          html = html.replace('Профиль оцифрован из профильной книги (PDF), километры в нём интерполированы по печатным отметкам, поэтому положение элементов может отличаться на 100–150 м. Уклоны даны для каждого направления по его ходу. Высоты относительные. Иркутский узел (км 5178–5199): взят ход, который непрерывно стыкуется с соседними листами. Привязка GPS идёт по километровым столбам. Справочный инструмент, он не заменяет профильную книгу и бортовые устройства.', 'Профиль расширен по режимным картам Улан-Удэ—Слюдянка и Зима—Нижнеудинск. Положение элементов привязано к печатным километровым отметкам и может иметь погрешность. GPS-привязка выполнена по координатам километровых столбов км 4680–5649; км 5630–5649 дополнены интерполяцией по треку GPX. Высоты относительные, рассчитаны по уклонам и длинам элементов. Справочный инструмент; не заменяет утверждённую профильную книгу и бортовые устройства.')
-          path.write_text(html, encoding='utf-8')
+          html = html.replace('profile-app-v3', 'profile-app-v5').replace('profile-app-v4', 'profile-app-v5')
           sw = Path('site/sw.js')
           if sw.exists():
-              sw.write_text(sw.read_text().replace('profile-app-v3', 'profile-app-v4'), encoding='utf-8')
-          print('Profile data extended:', len(data['odd']['el']), len(data['even']['el']), 'GPS posts:', len(data['posts']))
+              sw.write_text(sw.read_text().replace('profile-app-v3', 'profile-app-v5').replace('profile-app-v4', 'profile-app-v5'), encoding='utf-8')
+          path.write_text(html, encoding='utf-8')
+
+          for direction in ('odd', 'even'):
+              rows = data[direction]['el']
+              gaps = sum(1 for a, b in zip(rows, rows[1:]) if b[0] > a[0] + a[1] + 0.01)
+              overlaps = sum(1 for a, b in zip(rows, rows[1:]) if b[0] < a[0] + a[1] - 0.01)
+              print(direction, 'profile rows:', len(rows), 'stations:', len(data[direction]['st']),
+                    'signals:', len(data[direction]['sg']), 'gaps:', gaps, 'overlaps:', overlaps)
+          print('GPS posts:', len(data['posts']))
           PY
 
       - name: Configure Pages
