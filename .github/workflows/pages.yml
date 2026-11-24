@@ -82,7 +82,7 @@ jobs:
               return json.loads(payload)
 
           ext = read_gzip_b64('profile-extension.json.gz.b64')
-          objects = read_gzip_b64('station-signal-extension.json.gz.b64')
+          objects = read_gzip_b64('route-objects.json.gz.b64')
           path = Path('site/index.html')
           html = path.read_text(encoding='utf-8')
           marker = 'const D = '
@@ -120,40 +120,9 @@ jobs:
 
           for direction in ('odd', 'even'):
               data[direction]['el'] = rebuild_profile(data[direction]['el'], ext[direction])
-              # Combine source and extension objects, removing exact repeats only.
-              def norm_name(value):
-                  return ' '.join(str(value).strip().casefold().replace('ё', 'е').split())
-              station_rows = sorted(list(data[direction]['st']) + list(objects[direction]['st']),
-                                    key=lambda row: (norm_name(row[0]), float(row[1])))
-              merged_stations = []
-              for row in station_rows:
-                  name = norm_name(row[0])
-                  a, b = float(row[1]), float(row[2])
-                  match = None
-                  for existing in reversed(merged_stations):
-                      if norm_name(existing[0]) != name:
-                          continue
-                      existing_center = (float(existing[1]) + float(existing[2])) / 2
-                      row_center = (a + b) / 2
-                      if abs(existing_center - row_center) <= 6000:
-                          match = existing
-                          break
-                  if match is None:
-                      merged_stations.append([str(row[0]).strip(), a, b])
-                  else:
-                      match[1] = min(float(match[1]), a)
-                      match[2] = max(float(match[2]), b)
-              data[direction]['st'] = sorted(merged_stations, key=lambda row: row[1])
-
-              signal_rows = list(data[direction]['sg']) + list(objects[direction]['sg'])
-              seen_signals = set()
-              merged_signals = []
-              for row in signal_rows:
-                  key = (round(float(row[0]), 1), norm_name(row[1]))
-                  if key not in seen_signals:
-                      seen_signals.add(key)
-                      merged_signals.append(row)
-              data[direction]['sg'] = sorted(merged_signals, key=lambda row: row[0])
+              # Use the complete, separately curated route-object dataset.
+              data[direction]['st'] = objects[direction]['st']
+              data[direction]['sg'] = sorted(objects[direction]['sg'], key=lambda row: row[0])
 
           # Merge GPS posts by kilometre; extension coordinates win on duplicate km.
           posts_by_km = {int(row[0]): row for row in data['posts']}
@@ -164,7 +133,7 @@ jobs:
           html = html[:start] + json.dumps(data, ensure_ascii=False, separators=(',', ':')) + html[end:]
           html = html.replace('km>=4919&&km<=5330', 'km>=4680&&km<=5649')
           html = html.replace('Оцифрованный профиль уклонов в этой версии есть для 4919–5330 км', 'Оцифрованный профиль уклонов в этой версии есть для 4680–5649 км')
-          html = html.replace('profile-app-v3', 'profile-app-v8').replace('profile-app-v4', 'profile-app-v5')
+          html = html.replace('profile-app-v3', 'profile-app-v9').replace('profile-app-v4', 'profile-app-v5')
           sw = Path('site/sw.js')
           if sw.exists():
               sw.write_text(sw.read_text().replace('profile-app-v3', 'profile-app-v5').replace('profile-app-v4', 'profile-app-v5'), encoding='utf-8')
