@@ -82,6 +82,7 @@ jobs:
               return json.loads(payload)
 
           profile = read_gzip_b64('profile-full-2025.json.gz.b64')
+          extension = read_gzip_b64('profile-extension.json.gz.b64')
           objects = read_gzip_b64('route-objects.json.gz.b64')
           path = Path('site/index.html')
           html = path.read_text(encoding='utf-8')
@@ -107,7 +108,10 @@ jobs:
               data[direction]['st'] = objects[direction]['st']
               data[direction]['sg'] = sorted(objects[direction]['sg'], key=lambda row: row[0])
 
-          data['posts'] = sorted(objects['posts'], key=lambda row: row[0])
+          posts = {int(row[0]): row for row in data['posts']}
+          for row in extension['posts']:
+              posts[int(row[0])] = row
+          data['posts'] = [posts[k] for k in sorted(posts)]
 
           expected = {
               'even': (1627, 4679500, 5649501, 68, 548),
@@ -125,10 +129,10 @@ jobs:
           html = html[:start] + json.dumps(data, ensure_ascii=False, separators=(',', ':')) + html[end:]
           html = html.replace('km>=4919&&km<=5330', 'km>=4680&&km<=5649')
           html = html.replace('Оцифрованный профиль уклонов в этой версии есть для 4919–5330 км', 'Оцифрованный профиль уклонов в этой версии есть для 4680–5649 км')
-          html = html.replace('profile-app-v10', 'profile-app-v10').replace('profile-app-v10', 'profile-app-v10')
+          html = html.replace('profile-app-v3', 'profile-app-v10').replace('profile-app-v4', 'profile-app-v10').replace('profile-app-v5', 'profile-app-v10').replace('profile-app-v9', 'profile-app-v10')
           sw = Path('site/sw.js')
           if sw.exists():
-              sw.write_text(sw.read_text().replace('profile-app-v3', 'profile-app-v5').replace('profile-app-v4', 'profile-app-v5'), encoding='utf-8')
+              sw.write_text(sw.read_text().replace('profile-app-v3', 'profile-app-v10').replace('profile-app-v4', 'profile-app-v10').replace('profile-app-v5', 'profile-app-v10').replace('profile-app-v9', 'profile-app-v10'), encoding='utf-8')
           path.write_text(html, encoding='utf-8')
 
           for direction in ('odd', 'even'):
