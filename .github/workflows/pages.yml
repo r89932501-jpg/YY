@@ -65,7 +65,7 @@ jobs:
           path = Path('site/index.html')
           html = path.read_text(encoding='utf-8')
           start = html.index('const D = ') + len('const D = ')
-          end = html.index(';\\n(function', start)
+          end = html.index(';' + chr(10) + '(function', start)
           data = json.loads(html[start:end])
           for direction in ('odd', 'even'):
               data[direction]['el'].extend(ext[direction])
