@@ -94,7 +94,19 @@ jobs:
           extra_raw = Path('station-signal-extension.json.gz.b64').read_text().strip()
           extra = json.loads(gzip.decompress(base64.b64decode(extra_raw)))
           for direction in ('odd', 'even'):
-              data[direction]['st'].extend(extra[direction]['st'])
+              # Merge station intervals without duplicating the same station at the same kilometre.
+              merged_st = list(data[direction]['st'])
+              for candidate in extra[direction]['st']:
+                  name = str(candidate[0]).strip().casefold()
+                  start_m = float(candidate[1])
+                  duplicate = any(
+                      str(existing[0]).strip().casefold() == name
+                      and abs(float(existing[1]) - start_m) <= 3000
+                      for existing in merged_st
+                  )
+                  if not duplicate:
+                      merged_st.append(candidate)
+              data[direction]['st'] = merged_st
               data[direction]['sg'].extend(extra[direction]['sg'])
               data[direction]['st'].sort(key=lambda row: row[1])
               data[direction]['sg'].sort(key=lambda row: row[0])
