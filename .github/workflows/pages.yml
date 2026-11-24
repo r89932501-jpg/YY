@@ -81,7 +81,7 @@ jobs:
                       raise RuntimeError(f'{name}: damaged gzip/base64 data')
               return json.loads(payload)
 
-          ext = read_gzip_b64('profile-extension.json.gz.b64')
+          profile = read_gzip_b64('profile-full-2025.json.gz.b64')
           objects = read_gzip_b64('route-objects.json.gz.b64')
           path = Path('site/index.html')
           html = path.read_text(encoding='utf-8')
@@ -90,50 +90,42 @@ jobs:
           end = html.index(';' + chr(10) + '(function', start)
           data = json.loads(html[start:end])
 
-          # Build one non-overlapping profile. New digitized segments take
-          # precedence wherever they overlap the old profile; uncovered parts
-          # of the old profile are retained.
-          def rebuild_profile(old_rows, new_rows):
-              segments = []
-              for priority, rows in ((0, old_rows), (1, new_rows)):
-                  for row in rows:
-                      a, length, grade = float(row[0]), float(row[1]), float(row[2])
-                      if length > 0:
-                          segments.append((a, a + length, grade, priority))
-              boundaries = sorted({x for a, b, _, _ in segments for x in (a, b)})
-              result = []
-              for a, b in zip(boundaries, boundaries[1:]):
-                  if b <= a:
-                      continue
-                  mid = (a + b) / 2
-                  active = [s for s in segments if s[0] <= mid < s[1]]
-                  if not active:
-                      continue
-                  chosen = max(active, key=lambda s: s[3])
-                  grade = chosen[2]
-                  if result and abs((result[-1][0] + result[-1][1]) - a) < 0.01 and abs(result[-1][2] - grade) < 0.0001:
-                      result[-1][1] += b - a
-                  else:
-                      result.append([a, b - a, grade])
-              return [[int(a) if a.is_integer() else a, int(length) if length.is_integer() else length, grade]
-                      for a, length, grade in result]
-
-          for direction in ('odd', 'even'):
-              data[direction]['el'] = rebuild_profile(data[direction]['el'], ext[direction])
-              # Use the complete, separately curated route-object dataset.
+          # Replace the profile arrays completely. The 2025 Zima-Slyudyanka
+          # cards replace the former profile over km 4930-5330 (even) and
+          # km 5319-4919 (odd); old rows are not appended on top.
+          for direction in ('even', 'odd'):
+              item = profile[direction]
+              pos = int(item['start'])
+              rows = []
+              for length, grade_tenths in item['rows']:
+                  rows.append([pos, int(length), int(grade_tenths) / 10])
+                  pos += int(length)
+              for previous, current in zip(rows, rows[1:]):
+                  if current[0] != previous[0] + previous[1]:
+                      raise RuntimeError(f'{direction}: profile has a gap or overlap')
+              data[direction]['el'] = rows
               data[direction]['st'] = objects[direction]['st']
               data[direction]['sg'] = sorted(objects[direction]['sg'], key=lambda row: row[0])
 
-          # Merge GPS posts by kilometre; extension coordinates win on duplicate km.
-          posts_by_km = {int(row[0]): row for row in data['posts']}
-          for row in ext['posts']:
-              posts_by_km[int(row[0])] = row
-          data['posts'] = [posts_by_km[k] for k in sorted(posts_by_km)]
+          data['posts'] = sorted(objects['posts'], key=lambda row: row[0])
+
+          expected = {
+              'even': (1627, 4679500, 5649501, 68, 548),
+              'odd': (1593, -5649500, -4679500, 68, 551),
+          }
+          for direction, (count, first, last, stations, signals) in expected.items():
+              rows = data[direction]['el']
+              if len(rows) != count or rows[0][0] != first or rows[-1][0] + rows[-1][1] != last:
+                  raise RuntimeError(f'{direction}: profile range/count validation failed')
+              if len(data[direction]['st']) != stations or len(data[direction]['sg']) != signals:
+                  raise RuntimeError(f'{direction}: station/signal count validation failed')
+          if len(data['posts']) != 970:
+              raise RuntimeError('GPS post count validation failed')
 
           html = html[:start] + json.dumps(data, ensure_ascii=False, separators=(',', ':')) + html[end:]
           html = html.replace('km>=4919&&km<=5330', 'km>=4680&&km<=5649')
           html = html.replace('Оцифрованный профиль уклонов в этой версии есть для 4919–5330 км', 'Оцифрованный профиль уклонов в этой версии есть для 4680–5649 км')
-          html = html.replace('profile-app-v3', 'profile-app-v9').replace('profile-app-v4', 'profile-app-v5')
+          html = html.replace('profile-app-v10', 'profile-app-v10').replace('profile-app-v10', 'profile-app-v10')
           sw = Path('site/sw.js')
           if sw.exists():
               sw.write_text(sw.read_text().replace('profile-app-v3', 'profile-app-v5').replace('profile-app-v4', 'profile-app-v5'), encoding='utf-8')
