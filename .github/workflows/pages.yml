@@ -91,6 +91,13 @@ jobs:
                   gap = cur[0] - (prev[0] + prev[1])
                   if 0 < gap <= 5:
                       prev[1] += gap
+          extra_raw = Path('station-signal-extension.json.gz.b64').read_text().strip()
+          extra = json.loads(gzip.decompress(base64.b64decode(extra_raw)))
+          for direction in ('odd', 'even'):
+              data[direction]['st'].extend(extra[direction]['st'])
+              data[direction]['sg'].extend(extra[direction]['sg'])
+              data[direction]['st'].sort(key=lambda row: row[1])
+              data[direction]['sg'].sort(key=lambda row: row[0])
           data['posts'].extend(ext['posts'])
           data['posts'].sort(key=lambda row: row[0])
           html = html[:start] + json.dumps(data, ensure_ascii=False, separators=(',', ':')) + html[end:]
