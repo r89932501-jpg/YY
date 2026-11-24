@@ -64,7 +64,22 @@ jobs:
 
           def read_gzip_b64(name):
               raw = Path(name).read_text().strip()
-              return json.loads(gzip.decompress(base64.b64decode(raw)))
+              try:
+                  payload = gzip.decompress(base64.b64decode(raw, validate=True))
+              except Exception:
+                  payload = None
+                  for i in range(len(raw)):
+                      candidate = raw[:i] + raw[i+1:]
+                      if len(candidate) % 4:
+                          continue
+                      try:
+                          payload = gzip.decompress(base64.b64decode(candidate, validate=True))
+                          break
+                      except Exception:
+                          pass
+                  if payload is None:
+                      raise RuntimeError(f'{name}: damaged gzip/base64 data')
+              return json.loads(payload)
 
           ext = read_gzip_b64('profile-extension.json.gz.b64')
           objects = read_gzip_b64('station-signal-extension.json.gz.b64')
