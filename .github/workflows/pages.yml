@@ -133,7 +133,9 @@ jobs:
                   for existing in reversed(merged_stations):
                       if norm_name(existing[0]) != name:
                           continue
-                      if a <= float(existing[2]) + 300 and b >= float(existing[1]) - 300:
+                      existing_center = (float(existing[1]) + float(existing[2])) / 2
+                      row_center = (a + b) / 2
+                      if abs(existing_center - row_center) <= 6000:
                           match = existing
                           break
                   if match is None:
@@ -162,7 +164,7 @@ jobs:
           html = html[:start] + json.dumps(data, ensure_ascii=False, separators=(',', ':')) + html[end:]
           html = html.replace('km>=4919&&km<=5330', 'km>=4680&&km<=5649')
           html = html.replace('Оцифрованный профиль уклонов в этой версии есть для 4919–5330 км', 'Оцифрованный профиль уклонов в этой версии есть для 4680–5649 км')
-          html = html.replace('profile-app-v3', 'profile-app-v7').replace('profile-app-v4', 'profile-app-v5')
+          html = html.replace('profile-app-v3', 'profile-app-v8').replace('profile-app-v4', 'profile-app-v5')
           sw = Path('site/sw.js')
           if sw.exists():
               sw.write_text(sw.read_text().replace('profile-app-v3', 'profile-app-v5').replace('profile-app-v4', 'profile-app-v5'), encoding='utf-8')
