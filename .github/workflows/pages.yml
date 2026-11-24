@@ -61,7 +61,23 @@ jobs:
           python3 - <<'PY'
           import base64, gzip, json
           from pathlib import Path
-          ext = json.loads(gzip.decompress(base64.b64decode(Path('profile-extension.json.gz.b64').read_text().strip())))
+          raw = Path('profile-extension.json.gz.b64').read_text().strip()
+          try:
+              payload = gzip.decompress(base64.b64decode(raw, validate=True))
+          except Exception:
+              payload = None
+              for i in range(len(raw)):
+                  candidate = raw[:i] + raw[i+1:]
+                  if len(candidate) % 4:
+                      continue
+                  try:
+                      payload = gzip.decompress(base64.b64decode(candidate, validate=True))
+                      break
+                  except Exception:
+                      pass
+              if payload is None:
+                  raise RuntimeError('Profile extension data is damaged')
+          ext = json.loads(payload)
           path = Path('site/index.html')
           html = path.read_text(encoding='utf-8')
           start = html.index('const D = ') + len('const D = ')
