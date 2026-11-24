@@ -54,6 +54,41 @@ jobs:
           echo "Published source folder: $app_dir"
           find site -maxdepth 2 -type f | sort | head -100
 
+      - name: Extend route profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, gzip, json, re
+          from pathlib import Path
+          ext = json.loads(gzip.decompress(base64.b64decode(Path('profile-extension.json.gz.b64').read_text().strip())))
+          path = Path('site/index.html')
+          html = path.read_text(encoding='utf-8')
+          m = re.search(r'const D = (\\{.*?\\});\\n\\(function', html, re.S)
+          if not m:
+              raise SystemExit('Could not find app data object')
+          data = json.loads(m.group(1))
+          for direction in ('odd', 'even'):
+              data[direction]['el'].extend(ext[direction])
+              data[direction]['el'].sort(key=lambda row: row[0])
+              for i in range(1, len(data[direction]['el'])):
+                  prev, cur = data[direction]['el'][i-1], data[direction]['el'][i]
+                  gap = cur[0] - (prev[0] + prev[1])
+                  if 0 < gap <= 5:
+                      prev[1] += gap
+          data['posts'].extend(ext['posts'])
+          data['posts'].sort(key=lambda row: row[0])
+          html = html[:m.start(1)] + json.dumps(data, ensure_ascii=False, separators=(',', ':')) + html[m.end(1):]
+          html = html.replace('km>=4919&&km<=5330', 'km>=4680&&km<=5649')
+          html = html.replace('Оцифрованный профиль уклонов в этой версии есть для 4919–5330 км', 'Оцифрованный профиль уклонов в этой версии есть для 4680–5649 км')
+          html = html.replace('Профиль оцифрован из профильной книги (PDF), километры в нём интерполированы по печатным отметкам, поэтому положение элементов может отличаться на 100–150 м. Уклоны даны для каждого направления по его ходу. Высоты относительные. Иркутский узел (км 5178–5199): взят ход, который непрерывно стыкуется с соседними листами. Привязка GPS идёт по километровым столбам. Справочный инструмент, он не заменяет профильную книгу и бортовые устройства.', 'Профиль расширен по режимным картам Улан-Удэ—Слюдянка и Зима—Нижнеудинск. Положение элементов привязано к печатным километровым отметкам и может иметь погрешность. GPS-привязка выполнена по координатам километровых столбов км 4680–5649; км 5630–5649 дополнены интерполяцией по треку GPX. Высоты относительные, рассчитаны по уклонам и длинам элементов. Справочный инструмент; не заменяет утверждённую профильную книгу и бортовые устройства.')
+          path.write_text(html, encoding='utf-8')
+          sw = Path('site/sw.js')
+          if sw.exists():
+              sw.write_text(sw.read_text().replace('profile-app-v3', 'profile-app-v4'), encoding='utf-8')
+          print('Profile data extended:', len(data['odd']['el']), len(data['even']['el']), 'GPS posts:', len(data['posts']))
+          PY
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
